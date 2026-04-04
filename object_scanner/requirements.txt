@@ -1,0 +1,6 @@
+# Browser Object Scanner — Python dependencies
+#
+# Install with:  pip install -r requirements.txt
+# Then run:       playwright install chromium
+
+playwright>=1.44.0
