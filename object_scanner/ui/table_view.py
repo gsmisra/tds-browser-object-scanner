@@ -13,6 +13,7 @@ from tkinter import ttk
 from typing import Callable, List, Optional
 
 from models.element_model import Confidence, ScannedElement
+from utils.string_utils import truncate as _truncate
 
 
 # Visible columns and their display labels
@@ -183,13 +184,3 @@ class TableView(ttk.Frame):
         if el:
             from ui.details_dialog import DetailsDialog
             DetailsDialog(self.winfo_toplevel(), el)
-
-
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-def _truncate(text: str, max_len: int) -> str:
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 1] + "…"

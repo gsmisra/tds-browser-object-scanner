@@ -201,8 +201,9 @@ def _scan_frame(frame, page_url: str, page_title: str, iframe_src: str, skip_hid
             attributes=item.get("attributes", {}),
         )
         css, xpath, confidence = build_locators(el)
-        # Prefer the JS-built xpath only if we couldn't build a better one
-        if not el.xpath:
+        # Use the locator-service xpath when available; keep the JS-built one
+        # as a fallback when the locator service could not produce a selector.
+        if xpath:
             el.xpath = xpath
         el.css_selector = css
         el.confidence = confidence
