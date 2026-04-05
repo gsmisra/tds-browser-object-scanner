@@ -21,7 +21,7 @@ a = Analysis(
     ["object_scanner\\app.py"],
     pathex=["object_scanner"],
     binaries=pw_binaries,
-    datas=pw_datas,
+    datas=pw_datas + [("object_scanner\\TD-Bank-Logo.png", ".")],
     hiddenimports=pw_hiddenimports + [
         "tkinter",
         "tkinter.ttk",

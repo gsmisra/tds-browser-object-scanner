@@ -4,3 +4,4 @@
 # Then run:       playwright install chromium
 
 playwright>=1.44.0
+Pillow>=9.0.0

@@ -45,19 +45,16 @@ _DOM_EXTRACTION_JS = """
     }
 
     function getNearestLabel(el) {
-        // Check aria-labelledby
         const lblId = el.getAttribute('aria-labelledby');
         if (lblId) {
             const lbl = document.getElementById(lblId);
             if (lbl) return (lbl.innerText || lbl.textContent || '').trim();
         }
-        // Check explicit <label for="id">
         const id = el.getAttribute('id');
         if (id) {
             const lbl = document.querySelector('label[for="' + CSS.escape(id) + '"]');
             if (lbl) return (lbl.innerText || lbl.textContent || '').trim();
         }
-        // Check wrapping <label>
         let parent = el.parentElement;
         let depth = 0;
         while (parent && depth < 3) {
@@ -76,30 +73,84 @@ _DOM_EXTRACTION_JS = """
         while (node && depth < 8) {
             const heading = node.querySelector('h1,h2,h3,h4,h5,h6');
             if (heading) {
-                return (heading.innerText || heading.textContent || '').trim().substring(0, 100);
+                return {
+                    text: (heading.innerText || heading.textContent || '').trim().substring(0, 100),
+                    tag: heading.tagName.toLowerCase()
+                };
             }
-            // Also check if node itself is a heading
             if (/^H[1-6]$/.test(node.tagName)) {
-                return (node.innerText || node.textContent || '').trim().substring(0, 100);
+                return {
+                    text: (node.innerText || node.textContent || '').trim().substring(0, 100),
+                    tag: node.tagName.toLowerCase()
+                };
             }
             node = node.parentElement;
             depth++;
         }
-        return '';
+        return {text: '', tag: ''};
     }
 
     function isVisible(el) {
-        if (!el.offsetParent && el.tagName !== 'BODY') return false;
+        if (!el.offsetParent && el.tagName !== 'BODY' && el.tagName !== 'HTML') return false;
+
+        // Check aria-hidden on element and ancestors
+        if (el.getAttribute('aria-hidden') === 'true') return false;
+        let anc = el.parentElement;
+        while (anc) {
+            if (anc.getAttribute('aria-hidden') === 'true') return false;
+            anc = anc.parentElement;
+        }
+
         const style = window.getComputedStyle(el);
-        return style.display !== 'none'
-            && style.visibility !== 'hidden'
-            && style.opacity !== '0'
-            && el.offsetWidth > 0
-            && el.offsetHeight > 0;
+        if (style.display === 'none') return false;
+        if (style.visibility === 'hidden') return false;
+        if (parseFloat(style.opacity) === 0) return false;
+
+        // Skip very small elements (tracking pixels, hidden inputs)
+        if (el.offsetWidth < 3 || el.offsetHeight < 3) return false;
+
+        return true;
+    }
+
+    function isInteractable(el) {
+        const style = window.getComputedStyle(el);
+        if (style.pointerEvents === 'none') return false;
+        return true;
     }
 
     function isEnabled(el) {
-        return !el.disabled && !el.getAttribute('aria-disabled');
+        return !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+    }
+
+    function getParentInfo(el) {
+        const p = el.parentElement;
+        if (!p) return {tag: '', id: '', cls: ''};
+        return {
+            tag: p.tagName.toLowerCase(),
+            id: p.getAttribute('id') || '',
+            cls: (p.getAttribute('class') || '').trim()
+        };
+    }
+
+    function getSiblingInfo(sib) {
+        if (!sib || sib.nodeType !== 1) return {tag: '', id: '', text: '', name: ''};
+        return {
+            tag: sib.tagName.toLowerCase(),
+            id: sib.getAttribute('id') || '',
+            text: (sib.innerText || '').trim().substring(0, 80),
+            name: sib.getAttribute('name') || ''
+        };
+    }
+
+    function getNthOfType(el) {
+        const tag = el.tagName;
+        let n = 1;
+        let sib = el.previousElementSibling;
+        while (sib) {
+            if (sib.tagName === tag) n++;
+            sib = sib.previousElementSibling;
+        }
+        return n;
     }
 
     const seen = new Set();
@@ -112,10 +163,16 @@ _DOM_EXTRACTION_JS = """
 
         const vis = isVisible(el);
         if (skipHidden && !vis) return;
+        if (skipHidden && !isInteractable(el)) return;
 
         const tag = el.tagName.toLowerCase();
         const elType = el.getAttribute('type') || '';
         const isPassword = tag === 'input' && elType.toLowerCase() === 'password';
+        const parentInfo = getParentInfo(el);
+        const prevSib = getSiblingInfo(el.previousElementSibling);
+        const nextSib = getSiblingInfo(el.nextElementSibling);
+        const nthOfType = getNthOfType(el);
+        const headingInfo = getNearestHeading(el);
 
         results.push({
             tag: tag,
@@ -132,12 +189,29 @@ _DOM_EXTRACTION_JS = """
                 || el.getAttribute('data-test-id')
                 || el.getAttribute('data-test')
                 || '',
+            data_autom: el.getAttribute('data-autom')
+                || el.getAttribute('data-automation-id')
+                || el.getAttribute('data-auto')
+                || el.getAttribute('data-qa')
+                || el.getAttribute('data-cy')
+                || '',
             label_text: getNearestLabel(el),
-            nearby_heading: getNearestHeading(el),
+            nearby_heading: headingInfo.text,
+            nearby_heading_tag: headingInfo.tag,
             is_visible: vis,
             is_enabled: isEnabled(el),
             is_password_field: isPassword,
-            element_index: index++
+            element_index: index++,
+            parent_tag: parentInfo.tag,
+            parent_id: parentInfo.id,
+            parent_class: parentInfo.cls,
+            nth_of_type: nthOfType,
+            prev_sibling_tag: prevSib.tag,
+            prev_sibling_id: prevSib.id,
+            prev_sibling_text: prevSib.text,
+            next_sibling_tag: nextSib.tag,
+            next_sibling_id: nextSib.id,
+            next_sibling_text: nextSib.text
         });
     });
 
@@ -236,12 +310,24 @@ class DOMScannerService:
                 role=raw.get("role", ""),
                 href=raw.get("href", ""),
                 data_testid=raw.get("data_testid", ""),
+                data_autom=raw.get("data_autom", ""),
                 label_text=self._safe_str(raw.get("label_text", "")),
                 nearby_heading=self._safe_str(raw.get("nearby_heading", "")),
+                nearby_heading_tag=raw.get("nearby_heading_tag", ""),
                 is_visible=bool(raw.get("is_visible", True)),
                 is_enabled=bool(raw.get("is_enabled", True)),
                 is_password_field=bool(raw.get("is_password_field", False)),
                 element_index=int(raw.get("element_index", 0)),
+                parent_tag=raw.get("parent_tag", ""),
+                parent_id=raw.get("parent_id", ""),
+                parent_class=raw.get("parent_class", ""),
+                nth_of_type=int(raw.get("nth_of_type", 0)),
+                prev_sibling_tag=raw.get("prev_sibling_tag", ""),
+                prev_sibling_id=raw.get("prev_sibling_id", ""),
+                prev_sibling_text=self._safe_str(raw.get("prev_sibling_text", "")),
+                next_sibling_tag=raw.get("next_sibling_tag", ""),
+                next_sibling_id=raw.get("next_sibling_id", ""),
+                next_sibling_text=self._safe_str(raw.get("next_sibling_text", "")),
             )
             elements.append(el)
         return elements

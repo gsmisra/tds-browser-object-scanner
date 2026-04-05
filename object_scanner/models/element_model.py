@@ -51,10 +51,12 @@ class ScannedElement:
     role: str = ""
     href: str = ""
     data_testid: str = ""
+    data_autom: str = ""       # data-autom, data-qa, data-cy, etc.
 
     # --- Contextual metadata ---
     label_text: str = ""       # <label for="..."> association
     nearby_heading: str = ""   # Nearest ancestor h1-h6 text
+    nearby_heading_tag: str = ""  # e.g., "h3"
 
     # --- State ---
     is_visible: bool = True
@@ -66,6 +68,18 @@ class ScannedElement:
     xpath: str = ""
     selector_quality: str = SelectorQuality.UNKNOWN
     selector_notes: str = ""
+
+    # --- Parent/sibling context (for locator generation) ---
+    parent_tag: str = ""
+    parent_id: str = ""
+    parent_class: str = ""
+    nth_of_type: int = 0
+    prev_sibling_tag: str = ""
+    prev_sibling_id: str = ""
+    prev_sibling_text: str = ""
+    next_sibling_tag: str = ""
+    next_sibling_id: str = ""
+    next_sibling_text: str = ""
 
     # --- Ordering ---
     element_index: int = 0     # DOM order position on page
@@ -88,8 +102,10 @@ class ScannedElement:
             "role": self.role,
             "href": self.href,
             "data_testid": self.data_testid,
+            "data_autom": self.data_autom,
             "label_text": self.label_text,
             "nearby_heading": self.nearby_heading,
+            "nearby_heading_tag": self.nearby_heading_tag,
             "is_visible": self.is_visible,
             "is_enabled": self.is_enabled,
             "is_password_field": self.is_password_field,
@@ -97,6 +113,10 @@ class ScannedElement:
             "xpath": self.xpath,
             "selector_quality": self.selector_quality,
             "selector_notes": self.selector_notes,
+            "parent_tag": self.parent_tag,
+            "parent_id": self.parent_id,
+            "parent_class": self.parent_class,
+            "nth_of_type": self.nth_of_type,
             "element_index": self.element_index,
         }
 

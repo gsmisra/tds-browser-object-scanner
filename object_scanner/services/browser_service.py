@@ -88,7 +88,18 @@ class BrowserService:
         )
         if channel:
             launch_kwargs["channel"] = channel
-        self._browser = launcher.launch(**launch_kwargs)
+
+        try:
+            self._browser = launcher.launch(**launch_kwargs)
+        except Exception:
+            # Ensure Playwright is fully torn down so the next launch attempt
+            # doesn't collide with a stale asyncio event loop.
+            try:
+                self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
+            raise
 
         # New context with no fixed viewport so the user can resize freely
         self._context = self._browser.new_context(no_viewport=True)

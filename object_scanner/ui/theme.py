@@ -27,7 +27,7 @@ FG          = "#d4d4d4"   # Primary text
 FG_DIM      = "#7a7a7a"   # Secondary / disabled text
 FG_HEADING  = "#cccccc"   # Treeview column headings
 BG_ROW_ALT  = "#323232"   # Alternating odd-row background in table
-TREEVIEW_GRID = "#3e3e3e" # Subtle grid / separator colour for Treeview
+TREEVIEW_GRID = "#5a5a5a" # Grid / separator colour for Treeview (lighter for visibility)
 
 # Quality row background colours (dark-safe)
 QUALITY_HIGH_BG    = "#1a3d2a"   # muted green

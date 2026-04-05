@@ -87,6 +87,23 @@ class SessionService:
     def total_element_count(self) -> int:
         return sum(len(p.elements) for p in self._pages)
 
+    def add_element_to_url(self, url: str, title: str, element) -> None:
+        """Add a single element to the page with the given URL, creating if needed."""
+        page = self.get_page_by_url(url)
+        if page:
+            max_idx = max((e.element_index for e in page.elements), default=-1)
+            element.element_index = max_idx + 1
+            element.page_id = page.page_id
+            page.elements.append(element)
+            logger.info("Appended manual element to existing page '%s'", title)
+        else:
+            new_page = ScannedPage(page_url=url, page_title=title)
+            element.element_index = 0
+            element.page_id = new_page.page_id
+            new_page.elements.append(element)
+            self._pages.append(new_page)
+            logger.info("Created new page '%s' for manual element", title)
+
     def set_page_label(self, page_id: str, label: str) -> bool:
         page = self.get_page_by_id(page_id)
         if page:

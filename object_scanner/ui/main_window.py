@@ -12,11 +12,15 @@ Owns:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from typing import Optional
+from PIL import Image, ImageTk
 
 import config
 from models.element_model import ScannedPage, SelectorQuality
@@ -39,6 +43,144 @@ _QUALITY_COLOURS = {
     SelectorQuality.LOW:     theme.QUALITY_LOW_BG,
     SelectorQuality.UNKNOWN: theme.QUALITY_UNKNOWN_BG,
 }
+
+# ---------------------------------------------------------------------------
+# JavaScript for manual element picker
+# ---------------------------------------------------------------------------
+_MANUAL_PICK_JS = """
+() => {
+    return new Promise((resolve) => {
+        // Clean up any leftover picker elements
+        document.querySelectorAll('[data-arsim-picker]').forEach(e => e.remove());
+
+        const overlay = document.createElement('div');
+        overlay.setAttribute('data-arsim-picker', '1');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483646;cursor:crosshair;background:transparent;';
+        document.body.appendChild(overlay);
+
+        const highlight = document.createElement('div');
+        highlight.setAttribute('data-arsim-picker', '1');
+        highlight.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;border:3px solid red;border-radius:2px;background:rgba(255,0,0,0.08);display:none;transition:top 0.06s,left 0.06s,width 0.06s,height 0.06s;';
+        document.body.appendChild(highlight);
+
+        const tooltip = document.createElement('div');
+        tooltip.setAttribute('data-arsim-picker', '1');
+        tooltip.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;background:rgba(0,0,0,0.85);color:#fff;padding:8px 18px;border-radius:6px;font:13px/1.4 sans-serif;pointer-events:none;white-space:nowrap;';
+        tooltip.textContent = 'Click an element to capture it  ·  Press ESC to cancel';
+        document.body.appendChild(tooltip);
+
+        let lastEl = null;
+
+        function getNearestLabel(el) {
+            const lblId = el.getAttribute('aria-labelledby');
+            if (lblId) { const lbl = document.getElementById(lblId); if (lbl) return (lbl.innerText || '').trim(); }
+            const id = el.getAttribute('id');
+            if (id) { try { const lbl = document.querySelector('label[for=\"'+CSS.escape(id)+'\"]'); if (lbl) return (lbl.innerText || '').trim(); } catch(e){} }
+            let p = el.parentElement, d = 0;
+            while (p && d < 3) { if (p.tagName === 'LABEL') return (p.innerText || '').trim(); p = p.parentElement; d++; }
+            return '';
+        }
+
+        function getNearestHeading(el) {
+            let node = el.parentElement, depth = 0;
+            while (node && depth < 8) {
+                const h = node.querySelector('h1,h2,h3,h4,h5,h6');
+                if (h) return (h.innerText || '').trim().substring(0, 100);
+                if (/^H[1-6]$/.test(node.tagName)) return (node.innerText || '').trim().substring(0, 100);
+                node = node.parentElement; depth++;
+            }
+            return '';
+        }
+
+        function getParentInfo(el) {
+            const p = el.parentElement;
+            if (!p) return {tag:'',id:'',cls:''};
+            return { tag: p.tagName.toLowerCase(), id: p.getAttribute('id')||'', cls: (p.getAttribute('class')||'').trim() };
+        }
+
+        function getSiblingInfo(sib) {
+            if (!sib || sib.nodeType !== 1) return {tag:'',id:'',text:'',name:''};
+            return { tag: sib.tagName.toLowerCase(), id: sib.getAttribute('id')||'', text: (sib.innerText||'').trim().substring(0,80), name: sib.getAttribute('name')||'' };
+        }
+
+        function getNthOfType(el) {
+            const tag = el.tagName;
+            let n = 1, sib = el.previousElementSibling;
+            while (sib) { if (sib.tagName === tag) n++; sib = sib.previousElementSibling; }
+            return n;
+        }
+
+        overlay.addEventListener('mousemove', (e) => {
+            overlay.style.pointerEvents = 'none';
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            overlay.style.pointerEvents = 'auto';
+            if (el && el !== lastEl && !el.hasAttribute('data-arsim-picker')) {
+                lastEl = el;
+                const rect = el.getBoundingClientRect();
+                highlight.style.display = 'block';
+                highlight.style.top = (rect.top - 2) + 'px';
+                highlight.style.left = (rect.left - 2) + 'px';
+                highlight.style.width = (rect.width + 4) + 'px';
+                highlight.style.height = (rect.height + 4) + 'px';
+            }
+        });
+
+        overlay.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            overlay.style.pointerEvents = 'none';
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            overlay.style.pointerEvents = 'auto';
+            if (el && !el.hasAttribute('data-arsim-picker')) {
+                const tag = el.tagName.toLowerCase();
+                const elType = el.getAttribute('type') || '';
+                const parentInfo = getParentInfo(el);
+                const prevSib = getSiblingInfo(el.previousElementSibling);
+                const nextSib = getSiblingInfo(el.nextElementSibling);
+                const data = {
+                    tag: tag,
+                    element_type: elType || tag,
+                    visible_text: (el.innerText || el.textContent || '').trim().substring(0, 200),
+                    attr_id: el.getAttribute('id') || '',
+                    attr_name: el.getAttribute('name') || '',
+                    attr_class: (el.getAttribute('class') || '').trim(),
+                    attr_placeholder: el.getAttribute('placeholder') || '',
+                    aria_label: el.getAttribute('aria-label') || '',
+                    role: el.getAttribute('role') || '',
+                    href: el.getAttribute('href') || '',
+                    data_testid: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || '',
+                    label_text: getNearestLabel(el),
+                    nearby_heading: getNearestHeading(el),
+                    is_visible: true,
+                    is_enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true',
+                    is_password_field: tag === 'input' && elType.toLowerCase() === 'password',
+                    parent_tag: parentInfo.tag,
+                    parent_id: parentInfo.id,
+                    parent_class: parentInfo.cls,
+                    nth_of_type: getNthOfType(el),
+                    prev_sibling_tag: prevSib.tag,
+                    prev_sibling_id: prevSib.id,
+                    prev_sibling_text: prevSib.text,
+                    next_sibling_tag: nextSib.tag,
+                    next_sibling_id: nextSib.id,
+                    next_sibling_text: nextSib.text
+                };
+                document.querySelectorAll('[data-arsim-picker]').forEach(e => e.remove());
+                resolve(JSON.stringify(data));
+            }
+        });
+
+        function escHandler(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('[data-arsim-picker]').forEach(el => el.remove());
+                document.removeEventListener('keydown', escHandler, true);
+                resolve(null);
+            }
+        }
+        document.addEventListener('keydown', escHandler, true);
+    });
+}
+"""
 
 
 class MainWindow:
@@ -80,43 +222,63 @@ class MainWindow:
         self._build_main_area()
         self._build_footer()
 
+    @staticmethod
+    def _resource_path(relative_path: str) -> str:
+        """Resolve path for bundled PyInstaller resources or dev-time files."""
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base, relative_path)
+
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self._root, padding=(6, 4))
         bar.grid(row=0, column=0, sticky="ew")
+
+        # --- TD Bank logo (top-left) ---
+        try:
+            logo_path = self._resource_path("TD-Bank-Logo.png")
+            img = Image.open(logo_path)
+            img = img.resize((100, 56), Image.LANCZOS)
+            self._logo_img = ImageTk.PhotoImage(img)
+            logo_lbl = tk.Label(bar, image=self._logo_img, bg=theme.BG_PANEL)
+            logo_lbl.grid(row=0, column=0, padx=(0, 10), sticky="w")
+        except Exception as exc:
+            logger.warning("Could not load logo: %s", exc)
+            self._logo_img = None
 
         btn_defs = [
             ("Launch Browser",     self._cmd_launch,  "primary"),
             ("Scan Current Page",  self._cmd_scan,    "action"),
             ("Rescan",             self._cmd_rescan,  "action"),
+            ("Manual Scan",        self._cmd_manual_scan, "action"),
             ("Clear Results",      self._cmd_clear,   "secondary"),
             ("Export Results",     self._cmd_export,  "secondary"),
         ]
 
+        col_offset = 1  # column 0 is the logo
         for i, (label, cmd, _style) in enumerate(btn_defs):
             ttk.Button(bar, text=label, command=cmd, width=18).grid(
-                row=0, column=i, padx=3, pady=2
+                row=0, column=col_offset + i, padx=3, pady=2
             )
 
         # Highlight button (element must be selected first)
         ttk.Button(
             bar, text="Highlight on Page", command=self._cmd_highlight, width=18
-        ).grid(row=0, column=len(btn_defs), padx=3, pady=2)
+        ).grid(row=0, column=col_offset + len(btn_defs), padx=3, pady=2)
 
         # Browser type selector
-        ttk.Label(bar, text="Browser:").grid(row=0, column=len(btn_defs) + 1, padx=(16, 2))
+        ttk.Label(bar, text="Browser:").grid(row=0, column=col_offset + len(btn_defs) + 1, padx=(16, 2))
         self._browser_var = tk.StringVar(value=config.BROWSER_TYPE)
         browser_combo = ttk.Combobox(
             bar,
             textvariable=self._browser_var,
-            values=["chromium", "chrome", "firefox", "webkit"],
+            values=["chromium", "chrome", "firefox", "webkit", "edge"],
             width=10,
             state="readonly",
         )
-        browser_combo.grid(row=0, column=len(btn_defs) + 2, padx=2)
+        browser_combo.grid(row=0, column=col_offset + len(btn_defs) + 2, padx=2)
 
         # Exit
         ttk.Button(bar, text="Exit", command=self._on_exit, width=8).grid(
-            row=0, column=len(btn_defs) + 3, padx=(16, 3)
+            row=0, column=col_offset + len(btn_defs) + 3, padx=(16, 3)
         )
 
     def _build_status_bar(self) -> None:
@@ -222,9 +384,28 @@ class MainWindow:
             self._root.after(0, lambda: self._set_info("Browser ready."))
         except Exception as exc:
             logger.exception("Launch failed")
-            self._root.after(0, lambda: self._set_info(f"Launch failed: {exc}", error=True))
+            msg = str(exc)
+            browser_type = self._browser_var.get()
+            self._root.after(
+                0, lambda: self._on_launch_failed(browser_type, msg)
+            )
         finally:
             self._root.after(0, self._refresh_status)
+
+    def _on_launch_failed(self, browser_type: str, error_msg: str) -> None:
+        """Show a user-friendly error and prompt to select a different browser."""
+        messagebox.showerror(
+            "Browser Launch Failed",
+            f"Could not launch '{browser_type}' browser.\n\n"
+            f"Error: {error_msg}\n\n"
+            f"Please select a different browser type from the dropdown "
+            f"and click 'Launch Browser' again.\n\n"
+            f"Available options: chromium, chrome, firefox, webkit, edge",
+        )
+        self._set_info(
+            f"Launch failed for '{browser_type}' — select a different browser.",
+            error=True,
+        )
 
     def _cmd_scan(self) -> None:
         if not self._browser.is_running:
@@ -246,7 +427,7 @@ class MainWindow:
                 raise RuntimeError("Browser page not available.")
 
             scanned: ScannedPage = self._scanner.scan_page(page)
-            self._locator.decorate_elements(scanned.elements)
+            self._locator.decorate_elements(scanned.elements, page=page)
             self._session.add_or_replace(scanned, overwrite=True)
 
             self._root.after(0, lambda: self._on_scan_complete(scanned))
@@ -345,6 +526,107 @@ class MainWindow:
             self._root.after(
                 0, lambda: self._set_info(f"Highlight error: {exc}", error=True)
             )
+
+    # ------------------------------------------------------------------
+    # Manual scan
+    # ------------------------------------------------------------------
+
+    def _cmd_manual_scan(self) -> None:
+        if not self._browser.is_running:
+            messagebox.showwarning("No Browser", "Please launch a browser first.")
+            return
+        if self._pending_future and not self._pending_future.done():
+            messagebox.showinfo("Busy", "Another operation is already in progress.")
+            return
+        self._set_info("Manual scan — click an element in the browser…")
+        self._root.iconify()  # Minimize the app window
+        self._run_in_thread(self._do_manual_scan)
+
+    def _do_manual_scan(self) -> None:
+        try:
+            page = self._browser.current_page
+            if page is None:
+                raise RuntimeError("Browser page not available.")
+
+            self._browser.bring_to_front()
+
+            # Inject picker JS — blocks until user clicks or presses ESC
+            raw_json = page.evaluate(_MANUAL_PICK_JS)
+
+            if raw_json is None:
+                self._root.after(0, self._on_manual_scan_cancelled)
+                return
+
+            raw = json.loads(raw_json)
+
+            from models.element_model import ScannedElement
+
+            el = ScannedElement(
+                page_title=page.title(),
+                page_url=page.url,
+                frame_index=0,
+                tag=raw.get("tag", ""),
+                element_type=raw.get("element_type", ""),
+                visible_text=raw.get("visible_text", "")[:300],
+                attr_id=raw.get("attr_id", ""),
+                attr_name=raw.get("attr_name", ""),
+                attr_class=raw.get("attr_class", ""),
+                attr_placeholder=raw.get("attr_placeholder", ""),
+                aria_label=raw.get("aria_label", ""),
+                role=raw.get("role", ""),
+                href=raw.get("href", ""),
+                data_testid=raw.get("data_testid", ""),
+                label_text=raw.get("label_text", "")[:300],
+                nearby_heading=raw.get("nearby_heading", "")[:100],
+                is_visible=True,
+                is_enabled=bool(raw.get("is_enabled", True)),
+                is_password_field=bool(raw.get("is_password_field", False)),
+                parent_tag=raw.get("parent_tag", ""),
+                parent_id=raw.get("parent_id", ""),
+                parent_class=raw.get("parent_class", ""),
+                nth_of_type=int(raw.get("nth_of_type", 0)),
+                prev_sibling_tag=raw.get("prev_sibling_tag", ""),
+                prev_sibling_id=raw.get("prev_sibling_id", ""),
+                prev_sibling_text=raw.get("prev_sibling_text", "")[:80],
+                next_sibling_tag=raw.get("next_sibling_tag", ""),
+                next_sibling_id=raw.get("next_sibling_id", ""),
+                next_sibling_text=raw.get("next_sibling_text", "")[:80],
+            )
+
+            # Generate locators (with DOM validation)
+            self._locator.decorate_elements([el], page=page)
+
+            # Add to session
+            self._session.add_element_to_url(page.url, page.title(), el)
+
+            self._root.after(0, lambda: self._on_manual_scan_complete(el))
+
+        except Exception as exc:
+            logger.exception("Manual scan failed")
+            self._root.after(
+                0, lambda: self._on_manual_scan_error(str(exc))
+            )
+
+    def _on_manual_scan_complete(self, el) -> None:
+        self._root.deiconify()
+        self._root.lift()
+        all_pages = self._session.pages
+        self._table.load_pages(all_pages)
+        total = sum(len(p.elements) for p in all_pages)
+        self._lbl_element_count_var.set(str(total))      # type: ignore[attr-defined]
+        self._set_info(
+            f"Manual scan captured: {el.tag} — {el.css_selector}"
+        )
+
+    def _on_manual_scan_cancelled(self) -> None:
+        self._root.deiconify()
+        self._root.lift()
+        self._set_info("Manual scan cancelled.")
+
+    def _on_manual_scan_error(self, error_msg: str) -> None:
+        self._root.deiconify()
+        self._root.lift()
+        self._set_info(f"Manual scan error: {error_msg}", error=True)
 
     # ------------------------------------------------------------------
     # UI event handlers
