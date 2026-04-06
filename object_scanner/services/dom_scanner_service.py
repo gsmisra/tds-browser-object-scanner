@@ -44,6 +44,16 @@ _DOM_EXTRACTION_JS = """
         return text.length > 200 ? text.substring(0, 200) : text;
     }
 
+    function hasDirectText(el) {
+        for (let i = 0; i < el.childNodes.length; i++) {
+            const node = el.childNodes[i];
+            if (node.nodeType === 3 && node.textContent.trim().length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function getNearestLabel(el) {
         const lblId = el.getAttribute('aria-labelledby');
         if (lblId) {
@@ -211,7 +221,8 @@ _DOM_EXTRACTION_JS = """
             prev_sibling_text: prevSib.text,
             next_sibling_tag: nextSib.tag,
             next_sibling_id: nextSib.id,
-            next_sibling_text: nextSib.text
+            next_sibling_text: nextSib.text,
+            has_direct_text: hasDirectText(el)
         });
     });
 
@@ -328,6 +339,7 @@ class DOMScannerService:
                 next_sibling_tag=raw.get("next_sibling_tag", ""),
                 next_sibling_id=raw.get("next_sibling_id", ""),
                 next_sibling_text=self._safe_str(raw.get("next_sibling_text", "")),
+                has_direct_text=bool(raw.get("has_direct_text", True)),
             )
             elements.append(el)
         return elements

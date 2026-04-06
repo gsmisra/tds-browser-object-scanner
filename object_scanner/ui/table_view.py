@@ -128,8 +128,15 @@ class TableView(tk.Frame):
         self._apply_filter()
 
     def clear(self) -> None:
-        """Remove all rows."""
+        """Remove all rows, including any detached (filtered-out) items."""
+        # Delete visible items
         self._tree.delete(*self._tree.get_children())
+        # Also delete detached items that aren't visible children
+        for iid in list(self._insertion_order):
+            try:
+                self._tree.delete(iid)
+            except Exception:
+                pass
         self._element_map.clear()
         self._insertion_order.clear()
         self._selected_element = None
@@ -290,8 +297,11 @@ class TableView(tk.Frame):
             if el is None:
                 continue
             if not term or self._matches(el, term, col_id):
-                self._tree.move(iid, "", tk.END)
-                matched += 1
+                try:
+                    self._tree.move(iid, "", tk.END)
+                    matched += 1
+                except Exception:
+                    pass
 
         self._apply_row_colours()
 

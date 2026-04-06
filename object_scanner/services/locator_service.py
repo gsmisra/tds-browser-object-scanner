@@ -224,7 +224,20 @@ class LocatorService:
 
         base = self._base_css_attr(el)
 
-        # Strategy 0: data-autom attribute (highest priority)
+        # Strategy 0: tag-qualified id (if initial #id was non-unique)
+        if el.attr_id:
+            candidates.append(f'{tag}#{_css_escape_id(el.attr_id)}')
+            # id + class combination
+            if el.attr_class:
+                own_tokens = [
+                    t for t in el.attr_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ][:2]
+                if own_tokens:
+                    ec = "." + ".".join(own_tokens)
+                    candidates.append(f'{tag}#{_css_escape_id(el.attr_id)}{ec}')
+
+        # Strategy 0b: data-autom attribute
         if el.data_autom:
             candidates.append(
                 f'{tag}[data-autom="{_css_escape_id(el.data_autom)}"]'
@@ -266,7 +279,24 @@ class LocatorService:
                 f'#{_css_escape_id(el.prev_sibling_id)} ~ {tag}:nth-of-type({el.nth_of_type})'
             )
 
-        # Strategy 7: parent class > base
+        # Strategy 7: parent tag.class > tag.class (mirroring XPath parent-scoped logic)
+        if el.parent_class and el.parent_tag and el.attr_class:
+            parent_tokens = [
+                t for t in el.parent_class.split()
+                if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+            ]
+            own_tokens = [
+                t for t in el.attr_class.split()
+                if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+            ]
+            if parent_tokens and own_tokens:
+                ptag = el.parent_tag
+                pc = "." + ".".join(parent_tokens[:3])
+                ec = "." + ".".join(own_tokens[:3])
+                candidates.append(f'{ptag}{pc} > {tag}{ec}')
+                candidates.append(f'{ptag}{pc} {tag}{ec}')
+
+        # Strategy 8: parent class > base
         if el.parent_class:
             tokens = [
                 t for t in el.parent_class.split()
@@ -280,8 +310,7 @@ class LocatorService:
                         f'{pc} > {tag}:nth-of-type({el.nth_of_type})'
                     )
 
-        # Strategy 8: data-autom of a sibling/nearby element for context
-        # (use element's own class with parent class context)
+        # Strategy 9: element's own class with parent class context (descendant)
         if el.attr_class:
             class_tokens = [
                 t for t in el.attr_class.split()
@@ -313,7 +342,16 @@ class LocatorService:
         base_pred = self._base_xpath_predicate(el)
         candidates: list[str] = []
 
-        # Strategy 0: data-autom attribute (highest priority)
+        # Strategy 0: id + visible text (for non-unique id selectors)
+        if el.attr_id and el.visible_text:
+            text = _normalise_text(el.visible_text)
+            if text and len(text) < 80:
+                text_pred = f'text()={_xpath_escape(text)}' if el.has_direct_text else f'normalize-space()={_xpath_escape(text)}'
+                candidates.append(
+                    f'//{tag}[@id={_xpath_escape(el.attr_id)} and {text_pred}]'
+                )
+
+        # Strategy 0b: data-autom attribute
         if el.data_autom:
             candidates.append(
                 f'//{tag}[@data-autom={_xpath_escape(el.data_autom)}]'
@@ -404,6 +442,85 @@ class LocatorService:
                         f'{_xpath_escape(heading_text)})]]//{tag}'
                     )
 
+        # Strategy 9: text combined with class attributes
+        if el.visible_text and el.attr_class:
+            text = _normalise_text(el.visible_text)
+            if text and len(text) < 80:
+                class_tokens = [
+                    t for t in el.attr_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ][:3]
+                if class_tokens:
+                    cls_pred = " and ".join(
+                        f'contains(@class, {_xpath_escape(t)})'
+                        for t in class_tokens
+                    )
+                    candidates.append(
+                        f'//{tag}[{cls_pred} and normalize-space()={_xpath_escape(text)}]'
+                    )
+
+        # Strategy 10: parent class + text
+        if el.visible_text and el.parent_class and el.parent_tag:
+            text = _normalise_text(el.visible_text)
+            if text and len(text) < 80:
+                parent_tokens = [
+                    t for t in el.parent_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ]
+                ptag = el.parent_tag
+                if parent_tokens:
+                    # 10a: parent tag + exact full class + text()
+                    full_cls = " ".join(parent_tokens)
+                    text_pred = f'text()={_xpath_escape(text)}' if el.has_direct_text else f'normalize-space()={_xpath_escape(text)}'
+                    candidates.append(
+                        f'//{ptag}[@class={_xpath_escape(full_cls)}]/{tag}[{text_pred}]'
+                    )
+                    # 10b: parent tag + contains first class + text()
+                    candidates.append(
+                        f'//{ptag}[contains(@class, {_xpath_escape(parent_tokens[0])})]/{tag}[{text_pred}]'
+                    )
+                    # 10c: any parent with contains class + normalize-space
+                    candidates.append(
+                        f'//*[contains(@class, {_xpath_escape(parent_tokens[0])})]/'
+                        f'{tag}[normalize-space()={_xpath_escape(text)}]'
+                    )
+
+        # Strategy 11: role + class / role + text / parent > role
+        if el.role:
+            if el.attr_class:
+                class_tokens = [
+                    t for t in el.attr_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ][:3]
+                if class_tokens:
+                    cls_pred = " and ".join(
+                        f'contains(@class, {_xpath_escape(t)})'
+                        for t in class_tokens
+                    )
+                    candidates.append(
+                        f'//{tag}[@role={_xpath_escape(el.role)} and {cls_pred}]'
+                    )
+            if el.visible_text:
+                text = _normalise_text(el.visible_text)
+                if text:
+                    text_pred = f'text()={_xpath_escape(text)}' if el.has_direct_text and len(text) < 80 else f'contains(normalize-space(), {_xpath_escape(text[:40])})'
+                    candidates.append(
+                        f'//{tag}[@role={_xpath_escape(el.role)} and {text_pred}]'
+                    )
+            if el.parent_class and el.parent_tag:
+                parent_tokens = [
+                    t for t in el.parent_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ][:2]
+                if parent_tokens:
+                    pc = " and ".join(
+                        f'contains(@class, {_xpath_escape(t)})'
+                        for t in parent_tokens
+                    )
+                    candidates.append(
+                        f'//{el.parent_tag}[{pc}]/{tag}[@role={_xpath_escape(el.role)}]'
+                    )
+
         for candidate in candidates:
             try:
                 count = page.evaluate(_COUNT_XPATH_JS, candidate)
@@ -482,12 +599,13 @@ class LocatorService:
         """Returns (selector, quality, note)."""
         tag = el.tag or "*"
 
-        # 1. Unique stable id
-        if el.attr_id and _is_stable_id(el.attr_id):
-            sel = f'#{el.attr_id}'
+        # 1. Any id attribute — tag-qualified for specificity
+        if el.attr_id:
+            sel = f'{tag}#{_css_escape_id(el.attr_id)}'
             if sel not in seen:
-                return sel, SelectorQuality.HIGH, ""
-            # id exists but is not unique in this scan — warn and fall through
+                quality = SelectorQuality.HIGH if _is_stable_id(el.attr_id) else SelectorQuality.MEDIUM
+                note = "" if _is_stable_id(el.attr_id) else "id may not be stable"
+                return sel, quality, note
             logger.debug("Duplicate CSS id selector '%s'", sel)
 
         # 2. data-testid
@@ -524,11 +642,7 @@ class LocatorService:
             if sel not in seen:
                 return sel, SelectorQuality.MEDIUM, ""
 
-        # 6. id + tag even if not stable (better than nothing)
-        if el.attr_id:
-            sel = f'{tag}#{el.attr_id}'
-            if sel not in seen:
-                return sel, SelectorQuality.MEDIUM, "id may not be stable"
+        # (step 6 removed — id handled in step 1 for all ids)
 
         # 7. Parent context — parent #id > base
         if el.parent_id and _is_stable_id(el.parent_id):
@@ -543,14 +657,42 @@ class LocatorService:
             if sel not in seen:
                 return sel, SelectorQuality.MEDIUM, "sibling-based"
 
-        # 9. Visible text for buttons/links (limited, escape issues)
-        if el.tag in ("button", "a") and el.visible_text:
-            text = _normalise_text(el.visible_text)
-            if text and len(text) < 60 and '"' not in text:
-                # No CSS text-content selector; best we can do is type + class
-                pass  # fall through — CSS has no :has-text, use XPath for this
+        # 9. Parent class > tag + own class (mirrors XPath parent-scoped text logic)
+        if el.parent_class and el.parent_tag and el.attr_class:
+            parent_tokens = [
+                t for t in el.parent_class.split()
+                if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+            ]
+            own_tokens = [
+                t for t in el.attr_class.split()
+                if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+            ]
+            if parent_tokens and own_tokens:
+                ptag = el.parent_tag
+                pc = "." + ".".join(parent_tokens[:3])
+                ec = "." + ".".join(own_tokens[:3])
+                # 9a: parent tag.class > tag.class
+                sel = f'{ptag}{pc} > {tag}{ec}'
+                if sel not in seen:
+                    return sel, SelectorQuality.MEDIUM, "parent-scoped class-based"
+                # 9b: parent tag.class tag.class (descendant)
+                sel = f'{ptag}{pc} {tag}{ec}'
+                if sel not in seen:
+                    return sel, SelectorQuality.MEDIUM, "parent-scoped class-based"
 
-        # 10. tag + type for inputs
+        # 10. Tag + class combination
+        if el.attr_class:
+            tokens = [
+                t for t in el.attr_class.split()
+                if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+            ]
+            if tokens:
+                class_part = "." + ".".join(tokens[:3])
+                sel = f'{tag}{class_part}'
+                if sel not in seen:
+                    return sel, SelectorQuality.MEDIUM, "class-based"
+
+        # 11. tag + type for inputs
         if el.tag == "input" and el.element_type:
             sel = f'input[type="{_css_escape_id(el.element_type)}"]'
             if sel not in seen:
@@ -573,11 +715,13 @@ class LocatorService:
         """Returns (xpath, quality, note).  Always relative (starts with //)."""
         tag = el.tag or "*"
 
-        # 1. Unique stable id
-        if el.attr_id and _is_stable_id(el.attr_id):
-            xp = f'//*[@id={_xpath_escape(el.attr_id)}]'
+        # 1. Any id attribute — tag-qualified for specificity
+        if el.attr_id:
+            xp = f'//{tag}[@id={_xpath_escape(el.attr_id)}]'
             if xp not in seen:
-                return xp, SelectorQuality.HIGH, ""
+                quality = SelectorQuality.HIGH if _is_stable_id(el.attr_id) else SelectorQuality.MEDIUM
+                note = "" if _is_stable_id(el.attr_id) else "id may not be stable"
+                return xp, quality, note
 
         # 2. data-testid
         if el.data_testid:
@@ -596,6 +740,34 @@ class LocatorService:
             xp = f'//{tag}[@aria-label={_xpath_escape(el.aria_label)}]'
             if xp not in seen:
                 return xp, SelectorQuality.HIGH, ""
+
+        # 3b. Clear visible text — direct text() match
+        # Only use text() when the element owns its text directly (not from descendants)
+        if el.visible_text and el.has_direct_text:
+            text = _normalise_text(el.visible_text)
+            if text and len(text) < 80:
+                # Prefer parent-scoped text() when parent class is available
+                # (plain text() is often non-unique for common labels)
+                if el.parent_class and el.parent_tag:
+                    parent_tokens = [
+                        t for t in el.parent_class.split()
+                        if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                    ]
+                    if parent_tokens:
+                        full_cls = " ".join(parent_tokens)
+                        ptag = el.parent_tag
+                        xp = f'//{ptag}[@class={_xpath_escape(full_cls)}]/{tag}[text()={_xpath_escape(text)}]'
+                        if xp not in seen:
+                            return xp, SelectorQuality.MEDIUM, "parent-scoped text-based"
+
+                # Plain text() match
+                xp = f'//{tag}[text()={_xpath_escape(text)}]'
+                if xp not in seen:
+                    return xp, SelectorQuality.MEDIUM, "text-based"
+                # Fallback: normalize-space for whitespace tolerance
+                xp = f'//{tag}[normalize-space()={_xpath_escape(text)}]'
+                if xp not in seen:
+                    return xp, SelectorQuality.MEDIUM, "text-based"
 
         # 4. label text association
         if el.label_text:
@@ -620,11 +792,28 @@ class LocatorService:
             if xp not in seen:
                 return xp, SelectorQuality.MEDIUM, ""
 
-        # 7. Visible text (buttons, links, options)
-        if el.tag in ("button", "a", "option") and el.visible_text:
+        # 7. Visible text — translate + contains fallback for any element
+        if el.visible_text:
             text = _normalise_text(el.visible_text)
             nbsp = "\u00a0"
             if text and len(text) < 80:
+                # 7a. For elements without direct text, combine text with class
+                # to avoid matching ancestor wrappers that share normalize-space()
+                if not el.has_direct_text and el.attr_class:
+                    class_tokens = [
+                        t for t in el.attr_class.split()
+                        if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                    ][:2]
+                    if class_tokens:
+                        cls_pred = " and ".join(
+                            f'contains(@class, {_xpath_escape(t)})'
+                            for t in class_tokens
+                        )
+                        xp = f'//{tag}[{cls_pred} and normalize-space()={_xpath_escape(text)}]'
+                        if xp not in seen:
+                            return xp, SelectorQuality.MEDIUM, "text+class-based"
+
+                # 7b. Plain normalize-space text match
                 xp = f'//{tag}[translate(normalize-space(), "{nbsp}", " ")={_xpath_escape(text)}]'
                 if xp not in seen:
                     return xp, SelectorQuality.MEDIUM, "text-based"
@@ -645,9 +834,50 @@ class LocatorService:
             if xp not in seen:
                 return xp, SelectorQuality.MEDIUM, "sibling-based"
 
-        # 10. role
+        # 10. role — always combine with other attributes for uniqueness
         if el.role:
-            xp = f'//*[@role={_xpath_escape(el.role)}]'
+            # 10a: role + class attributes
+            if el.attr_class:
+                class_tokens = [
+                    t for t in el.attr_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ][:3]
+                if class_tokens:
+                    cls_pred = " and ".join(
+                        f'contains(@class, {_xpath_escape(t)})'
+                        for t in class_tokens
+                    )
+                    xp = f'//{tag}[@role={_xpath_escape(el.role)} and {cls_pred}]'
+                    if xp not in seen:
+                        return xp, SelectorQuality.MEDIUM, "role+class-based"
+
+            # 10b: role + visible text
+            if el.visible_text:
+                text = _normalise_text(el.visible_text)
+                if text:
+                    text_pred = f'text()={_xpath_escape(text)}' if el.has_direct_text and len(text) < 80 else f'contains(normalize-space(), {_xpath_escape(text[:40])})'
+                    xp = f'//{tag}[@role={_xpath_escape(el.role)} and {text_pred}]'
+                    if xp not in seen:
+                        return xp, SelectorQuality.MEDIUM, "role+text-based"
+
+            # 10c: parent class > role
+            if el.parent_class and el.parent_tag:
+                parent_tokens = [
+                    t for t in el.parent_class.split()
+                    if t and not re.match(r'^[0-9a-f]{5,}$', t, re.I)
+                ]
+                if parent_tokens:
+                    ptag = el.parent_tag
+                    pc = " and ".join(
+                        f'contains(@class, {_xpath_escape(t)})'
+                        for t in parent_tokens[:2]
+                    )
+                    xp = f'//{ptag}[{pc}]/{tag}[@role={_xpath_escape(el.role)}]'
+                    if xp not in seen:
+                        return xp, SelectorQuality.MEDIUM, "parent-scoped role"
+
+            # 10d: bare role — last resort
+            xp = f'//{tag}[@role={_xpath_escape(el.role)}]'
             if xp not in seen:
                 return xp, SelectorQuality.LOW, "role-only — likely non-unique"
 

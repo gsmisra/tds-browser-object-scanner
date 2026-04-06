@@ -41,15 +41,22 @@ class SessionService:
         Add a new scanned page to the session.
 
         If ``overwrite`` is True and a page with the same URL already exists,
-        replace it.  Otherwise append (creating a duplicate entry).
+        merge new elements into the existing page, preserving any previously
+        scanned elements (e.g. from manual scans).
+        Otherwise append (creating a duplicate entry).
         """
         if overwrite:
             existing_index = self._find_index_by_url(page.page_url)
             if existing_index is not None:
+                existing_page = self._pages[existing_index]
+                self._merge_elements(existing_page, page)
+                # Update metadata
+                existing_page.page_title = page.page_title
+                existing_page.scan_timestamp = page.scan_timestamp
                 logger.info(
-                    "Replacing existing scan for URL: %s", page.page_url
+                    "Merged scan into existing page for URL: %s (%d elements)",
+                    page.page_url, len(existing_page.elements),
                 )
-                self._pages[existing_index] = page
                 return
 
         self._pages.append(page)
@@ -114,6 +121,42 @@ class SessionService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _merge_elements(existing: ScannedPage, incoming: ScannedPage) -> None:
+        """
+        Merge elements from *incoming* into *existing*, avoiding duplicates.
+        An element is considered a duplicate if it has the same tag,
+        visible_text, attr_id, attr_name, and attr_class.
+        Previously scanned elements (e.g. manual picks) are always retained.
+        """
+        def _element_key(el) -> tuple:
+            return (
+                el.tag,
+                el.visible_text.strip()[:100],
+                el.attr_id,
+                el.attr_name,
+                el.attr_class,
+            )
+
+        existing_keys = {_element_key(e) for e in existing.elements}
+        max_idx = max((e.element_index for e in existing.elements), default=-1)
+
+        added = 0
+        for el in incoming.elements:
+            key = _element_key(el)
+            if key not in existing_keys:
+                max_idx += 1
+                el.element_index = max_idx
+                el.page_id = existing.page_id
+                existing.elements.append(el)
+                existing_keys.add(key)
+                added += 1
+
+        logger.debug(
+            "Merge: %d new elements added, %d duplicates skipped, %d total",
+            added, len(incoming.elements) - added, len(existing.elements),
+        )
 
     def _find_index_by_url(self, url: str) -> Optional[int]:
         for i, p in enumerate(self._pages):

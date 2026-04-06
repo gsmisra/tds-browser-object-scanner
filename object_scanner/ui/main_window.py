@@ -110,6 +110,16 @@ _MANUAL_PICK_JS = """
             return n;
         }
 
+        function hasDirectText(el) {
+            for (let i = 0; i < el.childNodes.length; i++) {
+                const node = el.childNodes[i];
+                if (node.nodeType === 3 && node.textContent.trim().length > 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         overlay.addEventListener('mousemove', (e) => {
             overlay.style.pointerEvents = 'none';
             const el = document.elementFromPoint(e.clientX, e.clientY);
@@ -163,7 +173,8 @@ _MANUAL_PICK_JS = """
                     prev_sibling_text: prevSib.text,
                     next_sibling_tag: nextSib.tag,
                     next_sibling_id: nextSib.id,
-                    next_sibling_text: nextSib.text
+                    next_sibling_text: nextSib.text,
+                    has_direct_text: hasDirectText(el)
                 };
                 document.querySelectorAll('[data-arsim-picker]').forEach(e => e.remove());
                 resolve(JSON.stringify(data));
@@ -591,6 +602,7 @@ class MainWindow:
                 next_sibling_tag=raw.get("next_sibling_tag", ""),
                 next_sibling_id=raw.get("next_sibling_id", ""),
                 next_sibling_text=raw.get("next_sibling_text", "")[:80],
+                has_direct_text=bool(raw.get("has_direct_text", True)),
             )
 
             # Generate locators (with DOM validation)

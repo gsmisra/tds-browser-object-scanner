@@ -81,6 +81,9 @@ class ScannedElement:
     next_sibling_id: str = ""
     next_sibling_text: str = ""
 
+    # --- Text ownership ---
+    has_direct_text: bool = True   # True if text is from direct text nodes, not descendants
+
     # --- Ordering ---
     element_index: int = 0     # DOM order position on page
 
@@ -117,6 +120,7 @@ class ScannedElement:
             "parent_id": self.parent_id,
             "parent_class": self.parent_class,
             "nth_of_type": self.nth_of_type,
+            "has_direct_text": self.has_direct_text,
             "element_index": self.element_index,
         }
 
