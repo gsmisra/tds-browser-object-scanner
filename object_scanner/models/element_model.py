@@ -45,8 +45,10 @@ class ScannedElement:
     visible_text: str = ""
     attr_id: str = ""
     attr_name: str = ""
+    element_name: str = ""   # Display-friendly synthesized name (can differ from DOM @name)
     attr_class: str = ""
     attr_placeholder: str = ""
+    screenshot_path: str = ""  # Path to element screenshot with red box
     aria_label: str = ""
     role: str = ""
     href: str = ""
@@ -68,6 +70,8 @@ class ScannedElement:
     xpath: str = ""
     selector_quality: str = SelectorQuality.UNKNOWN
     selector_notes: str = ""
+    css_element_count: int = 0      # Number of elements matching CSS selector on page
+    xpath_element_count: int = 0    # Number of elements matching XPath on page
 
     # --- Parent/sibling context (for locator generation) ---
     parent_tag: str = ""
@@ -80,6 +84,10 @@ class ScannedElement:
     next_sibling_tag: str = ""
     next_sibling_id: str = ""
     next_sibling_text: str = ""
+    is_shadow_element: bool = False
+    shadow_host_tag: str = ""
+    shadow_host_id: str = ""
+    shadow_host_class: str = ""
 
     # --- Text ownership ---
     has_direct_text: bool = True   # True if text is from direct text nodes, not descendants
@@ -99,6 +107,7 @@ class ScannedElement:
             "visible_text": self.visible_text,
             "attr_id": self.attr_id,
             "attr_name": self.attr_name,
+            "element_name": self.element_name,
             "attr_class": self.attr_class,
             "attr_placeholder": self.attr_placeholder,
             "aria_label": self.aria_label,
@@ -120,8 +129,21 @@ class ScannedElement:
             "parent_id": self.parent_id,
             "parent_class": self.parent_class,
             "nth_of_type": self.nth_of_type,
+            "prev_sibling_tag": self.prev_sibling_tag,
+            "prev_sibling_id": self.prev_sibling_id,
+            "prev_sibling_text": self.prev_sibling_text,
+            "next_sibling_tag": self.next_sibling_tag,
+            "next_sibling_id": self.next_sibling_id,
+            "next_sibling_text": self.next_sibling_text,
+            "is_shadow_element": self.is_shadow_element,
+            "shadow_host_tag": self.shadow_host_tag,
+            "shadow_host_id": self.shadow_host_id,
+            "shadow_host_class": self.shadow_host_class,
             "has_direct_text": self.has_direct_text,
             "element_index": self.element_index,
+            "screenshot_path": self.screenshot_path,
+            "css_element_count": self.css_element_count,
+            "xpath_element_count": self.xpath_element_count,
         }
 
 

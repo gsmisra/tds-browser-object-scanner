@@ -85,6 +85,29 @@ class SessionService:
                 del self._pages[i]
                 return True
         return False
+    
+    def remove_elements(self, element_ids: list[str]) -> tuple[int, int]:
+        """Remove specific elements by their IDs across all pages.
+        
+        Returns:
+            tuple[int, int]: (count of elements removed, count of pages removed)
+        """
+        element_id_set = set(element_ids)
+        removed_count = 0
+        
+        # Remove elements from pages
+        for page in self._pages:
+            original_count = len(page.elements)
+            page.elements = [el for el in page.elements if el.element_id not in element_id_set]
+            removed_count += (original_count - len(page.elements))
+        
+        # Remove pages that have no elements left
+        pages_before = len(self._pages)
+        self._pages = [page for page in self._pages if len(page.elements) > 0]
+        pages_removed = pages_before - len(self._pages)
+        
+        logger.info("Removed %d elements from session, removed %d empty pages", removed_count, pages_removed)
+        return removed_count, pages_removed
 
     def clear(self) -> None:
         """Remove all pages from the session."""

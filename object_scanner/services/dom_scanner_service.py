@@ -163,17 +163,44 @@ _DOM_EXTRACTION_JS = """
         return n;
     }
 
+    function collectInteractiveElements() {
+        const roots = [document];
+        const all = [];
+        const seenRoots = new Set();
+
+        while (roots.length > 0) {
+            const root = roots.pop();
+            if (!root || seenRoots.has(root)) continue;
+            seenRoots.add(root);
+
+            try {
+                root.querySelectorAll(INTERACTIVE_SELECTORS).forEach(el => all.push(el));
+            } catch (e) {}
+
+            try {
+                root.querySelectorAll('*').forEach(node => {
+                    if (node.shadowRoot) {
+                        roots.push(node.shadowRoot);
+                    }
+                });
+            } catch (e) {}
+        }
+
+        return all;
+    }
+
     const seen = new Set();
     const results = [];
     let index = 0;
 
-    document.querySelectorAll(INTERACTIVE_SELECTORS).forEach(function(el) {
+    collectInteractiveElements().forEach(function(el) {
         if (seen.has(el)) return;
         seen.add(el);
 
         const vis = isVisible(el);
-        if (skipHidden && !vis) return;
-        if (skipHidden && !isInteractable(el)) return;
+        if (!vis) return;
+        if (!isInteractable(el)) return;
+        if (!isEnabled(el)) return;
 
         const tag = el.tagName.toLowerCase();
         const elType = el.getAttribute('type') || '';
@@ -183,6 +210,9 @@ _DOM_EXTRACTION_JS = """
         const nextSib = getSiblingInfo(el.nextElementSibling);
         const nthOfType = getNthOfType(el);
         const headingInfo = getNearestHeading(el);
+        const rootNode = el.getRootNode();
+        const isShadow = !!(rootNode && rootNode.host);
+        const shadowHost = isShadow ? rootNode.host : null;
 
         results.push({
             tag: tag,
@@ -222,7 +252,11 @@ _DOM_EXTRACTION_JS = """
             next_sibling_tag: nextSib.tag,
             next_sibling_id: nextSib.id,
             next_sibling_text: nextSib.text,
-            has_direct_text: hasDirectText(el)
+            has_direct_text: hasDirectText(el),
+            is_shadow_element: isShadow,
+            shadow_host_tag: shadowHost ? shadowHost.tagName.toLowerCase() : '',
+            shadow_host_id: shadowHost ? (shadowHost.getAttribute('id') || '') : '',
+            shadow_host_class: shadowHost ? ((shadowHost.getAttribute('class') || '').trim()) : ''
         });
     });
 
@@ -243,12 +277,33 @@ class DOMScannerService:
         Full page scan: main frame + optional iframes.
         Returns a populated ScannedPage (elements have no locators yet).
         """
+        # Step 1: Wait for initial DOM
         try:
             page.wait_for_load_state(
                 "domcontentloaded", timeout=config.SCAN_TIMEOUT_MS
             )
         except Exception as exc:
             logger.warning("Page did not finish loading before scan: %s", exc)
+
+        # Step 2: Wait for JavaScript-rendered content (SPAs)
+        # Try networkidle first (all network activity settled)
+        try:
+            page.wait_for_load_state("networkidle", timeout=5000)
+            logger.debug("Page reached networkidle state")
+        except Exception:
+            # Networkidle may timeout on streaming/polling pages
+            # Fallback: wait for at least one interactive element to appear
+            try:
+                page.wait_for_selector(
+                    'button, a[href], input, select, [role="button"], [onclick]',
+                    state="visible",
+                    timeout=3000
+                )
+                logger.debug("At least one interactive element found")
+            except Exception:
+                # Last resort: small delay for JS frameworks to render
+                logger.debug("No interactive elements detected yet, adding 1s delay for JS rendering")
+                page.wait_for_timeout(1000)
 
         page_url = page.url
         page_title = ""
@@ -282,11 +337,19 @@ class DOMScannerService:
             el.page_title = scanned.page_title
             el.page_url = scanned.page_url
 
-        logger.info(
-            "Scan complete — %d elements found on '%s'",
-            len(scanned.elements),
-            page_title,
-        )
+        element_count = len(scanned.elements)
+        if element_count == 0:
+            logger.warning(
+                "Scan found 0 elements on '%s' (%s) - page may require more time to render or uses complex JavaScript framework",
+                page_title,
+                page_url
+            )
+        else:
+            logger.info(
+                "Scan complete — %d elements found on '%s'",
+                element_count,
+                page_title,
+            )
         return scanned
 
     # ------------------------------------------------------------------
@@ -302,6 +365,15 @@ class DOMScannerService:
                 _DOM_EXTRACTION_JS, config.SKIP_HIDDEN_ELEMENTS
             )
             raw_list: list[dict] = json.loads(raw_json)
+            
+            if not raw_list:
+                logger.debug(
+                    "Frame %d: JS extraction returned empty array - no interactive elements found",
+                    frame_index
+                )
+        except json.JSONDecodeError as exc:
+            logger.error("Frame %d: Failed to parse JSON from JS extraction: %s", frame_index, exc)
+            return []
         except Exception as exc:
             logger.warning("JS extraction failed on frame %d: %s", frame_index, exc)
             return []
@@ -315,6 +387,7 @@ class DOMScannerService:
                 visible_text=self._safe_str(raw.get("visible_text", "")),
                 attr_id=raw.get("attr_id", ""),
                 attr_name=raw.get("attr_name", ""),
+                element_name=self._safe_str(raw.get("attr_name", "")),
                 attr_class=raw.get("attr_class", ""),
                 attr_placeholder=raw.get("attr_placeholder", ""),
                 aria_label=raw.get("aria_label", ""),
@@ -340,6 +413,10 @@ class DOMScannerService:
                 next_sibling_id=raw.get("next_sibling_id", ""),
                 next_sibling_text=self._safe_str(raw.get("next_sibling_text", "")),
                 has_direct_text=bool(raw.get("has_direct_text", True)),
+                is_shadow_element=bool(raw.get("is_shadow_element", False)),
+                shadow_host_tag=raw.get("shadow_host_tag", ""),
+                shadow_host_id=raw.get("shadow_host_id", ""),
+                shadow_host_class=raw.get("shadow_host_class", ""),
             )
             elements.append(el)
         return elements

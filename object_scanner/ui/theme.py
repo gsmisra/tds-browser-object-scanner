@@ -12,28 +12,28 @@ import tkinter as tk
 from tkinter import ttk
 
 # ---------------------------------------------------------------------------
-# Palette
+# Palette - Clean, Modern Light Theme
 # ---------------------------------------------------------------------------
 
-BG          = "#1e1e1e"   # root and plain Frame backgrounds
-BG_PANEL    = "#252526"   # LabelFrame / status panel backgrounds
-BG_WIDGET   = "#2d2d2d"   # Entry, Combobox, Treeview field area
+BG          = "#ffffff"   # root and plain Frame backgrounds - clean white
+BG_PANEL    = "#f8f9fa"   # LabelFrame / status panel backgrounds - light grey
+BG_WIDGET   = "#ffffff"   # Entry, Combobox, Treeview field area - white
 BTN_BG      = "#00A550"   # TD Bank green (button normal)
 BTN_ACTIVE  = "#008C43"   # TD Bank green – darker (button hover / pressed)
 BTN_FG      = "#ffffff"   # Button label colour (bright white)
-SEL_BG      = "#094771"   # Selection / focus highlight
-BORDER      = "#454545"   # Border / separator colour
-FG          = "#d4d4d4"   # Primary text
-FG_DIM      = "#7a7a7a"   # Secondary / disabled text
-FG_HEADING  = "#cccccc"   # Treeview column headings
-BG_ROW_ALT  = "#323232"   # Alternating odd-row background in table
-TREEVIEW_GRID = "#5a5a5a" # Grid / separator colour for Treeview (lighter for visibility)
+SEL_BG      = "#0078d4"   # Selection / focus highlight - modern blue
+BORDER      = "#e1e4e8"   # Border / separator colour - light grey
+FG          = "#24292e"   # Primary text - dark grey
+FG_DIM      = "#6a737d"   # Secondary / disabled text
+FG_HEADING  = "#586069"   # Treeview column headings
+BG_ROW_ALT  = "#f6f8fa"   # Alternating odd-row background in table - very light grey
+TREEVIEW_GRID = "#d1d5da" # Grid / separator colour for Treeview - light grey grid
 
-# Quality row background colours (dark-safe)
-QUALITY_HIGH_BG    = "#1a3d2a"   # muted green
-QUALITY_MED_BG     = "#3d3010"   # muted amber
-QUALITY_LOW_BG     = "#3d1a1a"   # muted red
-QUALITY_UNKNOWN_BG = "#2a2a2a"   # neutral dark
+# Quality row background colours (light theme)
+QUALITY_HIGH_BG    = "#d4edda"   # light green
+QUALITY_MED_BG     = "#fff3cd"   # light amber
+QUALITY_LOW_BG     = "#f8d7da"   # light red
+QUALITY_UNKNOWN_BG = "#e9ecef"   # neutral light grey
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +105,19 @@ def apply(root: tk.Tk) -> ttk.Style:
         relief=[("pressed", "flat")],
     )
 
+    # ── TCheckbutton ─────────────────────────────────────────────────────────
+    style.configure(
+        "TCheckbutton",
+        background=BG,
+        foreground=FG,
+        font=("Segoe UI", 9, "bold"),
+    )
+    style.map(
+        "TCheckbutton",
+        background=[("active", BG), ("selected", BG)],
+        foreground=[("active", BTN_ACTIVE), ("selected", BTN_ACTIVE)],
+    )
+
     # ── TCombobox ────────────────────────────────────────────────────────────
     style.configure(
         "TCombobox",
@@ -168,6 +181,16 @@ def apply(root: tk.Tk) -> ttk.Style:
         "Treeview.Heading",
         background=[("active", BTN_ACTIVE)],
     )
+    
+    # Configure grid layout with light grey separators
+    style.layout("Treeview", [
+        ("Treeview.treearea", {"sticky": "nswe"})
+    ])
+    
+    # Set grid line colors using option_add for cell borders
+    root.option_add("*Treeview*borderWidth", 1)
+    root.option_add("*Treeview*relief", "solid")
+    root.option_add("*Treeview*highlightThickness", 0)
 
     # ── TScrollbar ───────────────────────────────────────────────────────────
     style.configure(
