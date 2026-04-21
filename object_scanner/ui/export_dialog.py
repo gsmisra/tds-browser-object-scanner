@@ -39,7 +39,7 @@ class ExportDialog:
         # Create modal dialog
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Download Results")
-        self.dialog.geometry("520x340")
+        self.dialog.geometry("520x410")  # Increased height for screenshot checkbox
         self.dialog.resizable(False, False)
         self.dialog.transient(parent)
         self.dialog.grab_set()
@@ -47,7 +47,7 @@ class ExportDialog:
         # Center on parent
         self.dialog.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (520 // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (340 // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (410 // 2)
         self.dialog.geometry(f"+{x}+{y}")
         
         self._create_widgets()
@@ -120,6 +120,29 @@ class ExportDialog:
         )
         existing_desc.pack(anchor=tk.W, padx=(25, 0), pady=(3, 0))
         
+        # Screenshot download option
+        screenshot_frame = ttk.Frame(main_frame)
+        screenshot_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        self.include_screenshots = tk.BooleanVar(value=False)  # Unchecked by default
+        
+        screenshot_check = ttk.Checkbutton(
+            screenshot_frame,
+            text="Download captured screenshots",
+            variable=self.include_screenshots
+        )
+        screenshot_check.pack(anchor=tk.W)
+        
+        screenshot_desc = tk.Label(
+            screenshot_frame,
+            text="Saves all in-memory screenshots to disk alongside export files",
+            font=("Segoe UI", 8),
+            fg=theme.FG_DIM,
+            bg=theme.BG,
+            justify=tk.LEFT,
+        )
+        screenshot_desc.pack(anchor=tk.W, padx=(25, 0), pady=(3, 0))
+        
         # Buttons
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(10, 0))
@@ -170,15 +193,28 @@ class ExportDialog:
         """Export to new JSON, CSV, and Properties files."""
         try:
             json_path, csv_path, props_path = self.exporter.export_all(pages)
-            self.result = ("new", (json_path, csv_path, props_path))
+            
+            # Save screenshots if checkbox is checked
+            screenshot_count = 0
+            if self.include_screenshots.get():
+                screenshot_count = self._save_screenshots(pages, json_path.parent)
+            
+            self.result = ("new", (json_path, csv_path, props_path), screenshot_count)
+            
+            # Build success message
+            msg = (f"Files created successfully:\n\n"
+                   f"• {json_path.name}\n"
+                   f"• {csv_path.name}\n"
+                   f"• {props_path.name}")
+            
+            if screenshot_count > 0:
+                msg += f"\n• {screenshot_count} screenshots saved"
+            
+            msg += f"\n\nLocation: {json_path.parent}"
             
             messagebox.showinfo(
                 "Export Complete",
-                f"Files created successfully:\n\n"
-                f"• {json_path.name}\n"
-                f"• {csv_path.name}\n"
-                f"• {props_path.name}\n\n"
-                f"Location: {json_path.parent}",
+                msg,
                 parent=self.dialog
             )
             self.dialog.destroy()
@@ -207,7 +243,13 @@ class ExportDialog:
         
         try:
             updated_path = self.exporter.append_to_existing_file(pages, Path(file_path))
-            self.result = ("existing", updated_path)
+            
+            # Save screenshots if checkbox is checked
+            screenshot_count = 0
+            if self.include_screenshots.get():
+                screenshot_count = self._save_screenshots(pages, updated_path.parent)
+            
+            self.result = ("existing", updated_path, screenshot_count)
             
             # Determine file type
             file_ext = updated_path.suffix.lower()
@@ -220,12 +262,18 @@ class ExportDialog:
             else:
                 file_type = "File"
             
+            # Build success message
+            msg = (f"{file_type} file updated successfully:\n\n"
+                   f"{updated_path}\n\n"
+                   f"• Existing entries updated with timestamp\n"
+                   f"• New entries appended")
+            
+            if screenshot_count > 0:
+                msg += f"\n• {screenshot_count} screenshots saved"
+            
             messagebox.showinfo(
                 "Update Complete",
-                f"{file_type} file updated successfully:\n\n"
-                f"{updated_path}\n\n"
-                f"• Existing entries updated with timestamp\n"
-                f"• New entries appended",
+                msg,
                 parent=self.dialog
             )
             self.dialog.destroy()
@@ -244,3 +292,42 @@ class ExportDialog:
         """Handle cancel button click."""
         self.result = None
         self.dialog.destroy()
+    
+    def _save_screenshots(self, pages, export_dir: Path) -> int:
+        """
+        Save all in-memory screenshots to disk.
+        
+        Args:
+            pages: List of ScannedPage objects
+            export_dir: Directory where export files are saved
+            
+        Returns:
+            Number of screenshots saved
+        """
+        from pathlib import Path
+        
+        screenshots_dir = export_dir / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        
+        count = 0
+        for page in pages:
+            for el in page.elements:
+                if el.screenshot_data:
+                    # Generate filename based on element name
+                    safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' 
+                                       for c in (el.element_name or f"element_{el.element_index}"))
+                    filename = f"{safe_name}_{el.element_id[:8]}.png"
+                    screenshot_path = screenshots_dir / filename
+                    
+                    try:
+                        # Write bytes to file
+                        screenshot_path.write_bytes(el.screenshot_data)
+                        count += 1
+                        logger.debug("Saved screenshot: %s", filename)
+                    except Exception as exc:
+                        logger.warning("Failed to save screenshot %s: %s", filename, exc)
+        
+        if count > 0:
+            logger.info("Saved %d screenshots to %s", count, screenshots_dir)
+        
+        return count

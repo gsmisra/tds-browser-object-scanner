@@ -48,7 +48,7 @@ class ScannedElement:
     element_name: str = ""   # Display-friendly synthesized name (can differ from DOM @name)
     attr_class: str = ""
     attr_placeholder: str = ""
-    screenshot_path: str = ""  # Path to element screenshot with red box
+    screenshot_data: Optional[bytes] = None  # In-memory screenshot image data (PNG bytes)
     aria_label: str = ""
     role: str = ""
     href: str = ""
@@ -141,7 +141,7 @@ class ScannedElement:
             "shadow_host_class": self.shadow_host_class,
             "has_direct_text": self.has_direct_text,
             "element_index": self.element_index,
-            "screenshot_path": self.screenshot_path,
+            # screenshot_data excluded - not serialized (memory only)
             "css_element_count": self.css_element_count,
             "xpath_element_count": self.xpath_element_count,
         }

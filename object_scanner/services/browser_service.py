@@ -327,31 +327,34 @@ class BrowserService:
                 logger.exception("Error in new page callback: %s", exc)
 
     def capture_element_screenshot(
-        self, css_selector: str, xpath: str, output_path: str, is_shadow_element: bool = False
-    ) -> bool:
+        self, css_selector: str, xpath: str, is_shadow_element: bool = False
+    ) -> Optional[bytes]:
         """
         Capture a screenshot with a red box around the specified element.
-        Returns True if successful, False otherwise.
+        Returns PNG image data as bytes if successful, None otherwise.
         Must be called from the playwright worker thread.
         
         Args:
             css_selector: CSS selector for the element
             xpath: XPath for the element
-            output_path: Path to save the screenshot
             is_shadow_element: If True, uses pierce selector to handle Shadow DOM
+            
+        Returns:
+            PNG image bytes with red box drawn, or None if failed
         """
         if not self.is_running:
-            return False
+            return None
         
         # Always get the current active page (handles navigation)
         page = self.current_page
         if page is None:
-            return False
+            return None
 
         try:
             from PIL import Image, ImageDraw
             import tempfile
             from pathlib import Path
+            import io
 
             # First, try to locate the element
             element = None
@@ -388,13 +391,13 @@ class BrowserService:
             
             if not element:
                 logger.warning("Element not found for screenshot (is_shadow=%s)", is_shadow_element)
-                return False
+                return None
 
             # Get element bounding box
             box = element.bounding_box()
             if not box:
                 logger.warning("Element has no bounding box")
-                return False
+                return None
 
             # Scroll element into view
             element.scroll_into_view_if_needed()
@@ -403,7 +406,38 @@ class BrowserService:
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 temp_path = tmp.name
             
-            page.screenshot(path=temp_path, full_page=False)
+            # Try screenshot with reasonable timeout first
+            screenshot_success = False
+            primary_timeout = config.SCREENSHOT_TIMEOUT_MS
+            retry_timeout = max(5000, primary_timeout // 2)  # Half of primary, min 5s
+            
+            try:
+                page.screenshot(
+                    path=temp_path, 
+                    full_page=False, 
+                    timeout=primary_timeout,
+                    animations="disabled"  # Skip waiting for animations/transitions
+                )
+                screenshot_success = True
+            except Exception as e:
+                logger.debug("First screenshot attempt timed out, retrying with %dms: %s", retry_timeout, str(e)[:100])
+                # Retry with more aggressive timeout - some pages have slow font loading
+                try:
+                    page.screenshot(
+                        path=temp_path,
+                        full_page=False,
+                        timeout=retry_timeout,
+                        animations="disabled"
+                    )
+                    screenshot_success = True
+                except Exception as e2:
+                    logger.warning("Screenshot failed after retry: %s", str(e2)[:100])
+                    Path(temp_path).unlink(missing_ok=True)
+                    return None
+            
+            if not screenshot_success:
+                Path(temp_path).unlink(missing_ok=True)
+                return None
 
             # Open the screenshot and draw red box
             img = Image.open(temp_path)
@@ -414,7 +448,7 @@ class BrowserService:
             if not box:
                 logger.warning("Element bounding box lost after scroll")
                 Path(temp_path).unlink(missing_ok=True)
-                return False
+                return None
             
             # Draw red rectangle around element
             x = box["x"]
@@ -429,16 +463,17 @@ class BrowserService:
                     outline="red"
                 )
             
-            # Save the annotated screenshot
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            img.save(output_path)
+            # Convert image to PNG bytes
+            img_bytes_io = io.BytesIO()
+            img.save(img_bytes_io, format='PNG')
+            img_bytes = img_bytes_io.getvalue()
             
             # Clean up temp file
             Path(temp_path).unlink(missing_ok=True)
             
-            logger.info("Element screenshot saved to %s", output_path)
-            return True
+            logger.info("Element screenshot captured (%d bytes)", len(img_bytes))
+            return img_bytes
             
         except Exception as exc:
             logger.exception("Failed to capture element screenshot: %s", exc)
-            return False
+            return None

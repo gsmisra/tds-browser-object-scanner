@@ -56,7 +56,7 @@ _COL_VALUE: dict[str, Callable] = {
     "element_count":    lambda el: str(getattr(el, 'xpath_element_count', 0) if getattr(el, 'xpath_element_count', 0) > 0 else getattr(el, 'css_element_count', 0)),
     "is_shadow_element":lambda el: "Yes" if el.is_shadow_element else "No",
     "frame_index":      lambda el: str(el.frame_index),
-    "screenshot":       lambda el: "🖼️" if el.screenshot_path else "",
+    "screenshot":       lambda el: "🖼️" if el.screenshot_data else "",
 }
 
 _SEARCH_COL_ALL = "All Columns"
@@ -204,7 +204,7 @@ class TableView(tk.Frame):
         self._element_map[iid] = element
         
         # Update tree row values
-        screenshot_icon = "🖼️" if element.screenshot_path else ""
+        screenshot_icon = "🖼️" if element.screenshot_data else ""
         css_count = getattr(element, 'css_element_count', 0)
         xpath_count = getattr(element, 'xpath_element_count', 0)
         
@@ -352,7 +352,7 @@ class TableView(tk.Frame):
     # ------------------------------------------------------------------
 
     def _insert_row(self, el: ScannedElement) -> None:
-        screenshot_icon = "🖼️" if el.screenshot_path else ""
+        screenshot_icon = "🖼️" if el.screenshot_data else ""
         css_count = getattr(el, 'css_element_count', 0)
         xpath_count = getattr(el, 'xpath_element_count', 0)
         
@@ -552,7 +552,7 @@ class TableView(tk.Frame):
         col_index = int(col.replace('#', '')) - 1
         if col_index == 9:  # Screenshot column (0-indexed)
             el = self._element_map.get(item)
-            if el and el.screenshot_path:
+            if el and el.screenshot_data:
                 self._show_screenshot(el)
 
     def _show_context_menu(self, event: tk.Event) -> None:
@@ -563,11 +563,10 @@ class TableView(tk.Frame):
 
     def _show_screenshot(self, el: ScannedElement) -> None:
         """Show screenshot in borderless preview overlay."""
-        from pathlib import Path
         from PIL import Image, ImageTk
+        import io
         
-        screenshot_path = Path(el.screenshot_path)
-        if not screenshot_path.exists():
+        if not el.screenshot_data:
             return
         
         # Create borderless toplevel window
@@ -595,9 +594,9 @@ class TableView(tk.Frame):
         except tk.TclError:
             pass  # Alpha not supported on some systems
         
-        # Load and display image
+        # Load and display image from bytes
         try:
-            img = Image.open(screenshot_path)
+            img = Image.open(io.BytesIO(el.screenshot_data))
             
             # Calculate size to fit window with margins while maintaining aspect ratio
             max_width = int(root_width * 0.9)

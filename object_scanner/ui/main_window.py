@@ -598,13 +598,26 @@ class MainWindow:
         
         # Handle result
         if dialog.result:
-            export_type, paths = dialog.result
+            export_type, paths, screenshot_count = dialog.result
             
             if export_type == "new":
                 json_path, csv_path, props_path = paths
-                self._set_info(f"Exported: {json_path.name}, {csv_path.name}, {props_path.name}")
+                msg = f"Exported: {json_path.name}, {csv_path.name}, {props_path.name}"
+                if screenshot_count > 0:
+                    msg += f" + {screenshot_count} screenshots"
+                self._set_info(msg)
             else:  # existing
-                self._set_info(f"Updated: {paths.name}")
+                msg = f"Updated: {paths.name}"
+                if screenshot_count > 0:
+                    msg += f" + {screenshot_count} screenshots"
+                self._set_info(msg)
+            
+            # Clear screenshots from memory after successful export with screenshots
+            if screenshot_count > 0:
+                self._clear_all_screenshots()
+                # Reload table to update screenshot icons
+                all_pages = self._session.pages
+                self._table.load_pages(all_pages)
         else:
             self._set_info("Export cancelled")
 
@@ -653,16 +666,11 @@ class MainWindow:
         if not confirm:
             return
         
-        # Delete screenshot files from disk
+        # Clear screenshot data from memory (no files to delete)
         for el in selected_elements:
-            if el.screenshot_path:
-                try:
-                    screenshot_file = Path(el.screenshot_path)
-                    if screenshot_file.exists():
-                        screenshot_file.unlink()
-                        logger.info("Deleted screenshot: %s", screenshot_file.name)
-                except Exception as exc:
-                    logger.warning("Failed to delete screenshot %s: %s", el.screenshot_path, exc)
+            if el.screenshot_data:
+                el.screenshot_data = None
+                logger.debug("Cleared screenshot data for: %s", el.element_name)
         
         # Delete from table view (returns deleted elements)
         deleted_elements = self._table.delete_selected_rows()
@@ -786,29 +794,17 @@ class MainWindow:
         pass
     
     def _capture_screenshots(self, elements: list, page: Any) -> None:
-        """Capture screenshots with red boxes for all elements."""
-        from pathlib import Path
-        import config
-        
-        screenshots_dir = Path(config.EXPORT_DIR) / "screenshots"
-        screenshots_dir.mkdir(parents=True, exist_ok=True)
-        
+        """Capture screenshots with red boxes for all elements and store in memory."""
         for el in elements:
             if el.css_selector or el.xpath:
-                # Generate filename based on element name
-                safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' 
-                                   for c in (el.element_name or f"element_{el.element_index}"))
-                filename = f"{safe_name}_{el.element_id[:8]}.png"
-                output_path = str(screenshots_dir / filename)
-                
-                # Capture screenshot
-                success = self._browser.capture_element_screenshot(
-                    el.css_selector, el.xpath, output_path, el.is_shadow_element
+                # Capture screenshot and store as bytes in memory
+                img_bytes = self._browser.capture_element_screenshot(
+                    el.css_selector, el.xpath, el.is_shadow_element
                 )
                 
-                if success:
-                    el.screenshot_path = output_path
-                    logger.info("Screenshot captured for %s", el.element_name)
+                if img_bytes:
+                    el.screenshot_data = img_bytes
+                    logger.info("Screenshot captured for %s (%d bytes)", el.element_name, len(img_bytes))
                 else:
                     logger.warning("Failed to capture screenshot for %s", el.element_name)
 
@@ -1011,6 +1007,10 @@ class MainWindow:
                 "A browser session is active. Close browser and exit?",
             ):
                 return
+            
+            # Clear all screenshot data from memory before exit
+            self._clear_all_screenshots()
+            
             # Submit close() to the playwright worker thread and wait briefly.
             # Blocking the UI thread here is intentional — we are shutting down.
             try:
@@ -1020,6 +1020,17 @@ class MainWindow:
                 pass
         self._pw_executor.shutdown(wait=False)
         self._root.destroy()
+    
+    def _clear_all_screenshots(self) -> None:
+        """Clear all screenshot data from memory."""
+        count = 0
+        for page in self._session.pages:
+            for el in page.elements:
+                if el.screenshot_data:
+                    el.screenshot_data = None
+                    count += 1
+        if count > 0:
+            logger.info("Cleared %d screenshots from memory", count)
 
     # ------------------------------------------------------------------
     # Status helpers
